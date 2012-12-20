@@ -40,9 +40,9 @@ module CapGun
   # This mailer is configured with a capistrano variable called "cap_gun_email_envelope"
   class Mailer < ActionMailer::Base
 
-      def self.load_mailer_config(cap)
-       raise ArgumentError, "Need at least one recipient." if !cap.exists?(:cap_gun_email_envelope) || cap[:cap_gun_email_envelope][:recipients].blank?
-      end
+    def self.load_mailer_config(cap)
+     raise ArgumentError, "Need at least one recipient." if !cap.exists?(:cap_gun_email_envelope) || cap[:cap_gun_email_envelope][:recipients].blank?
+   end
 
       # Grab the options for emailing from capistrano[:cap_gun_email_envelope] (should be set in your deploy file)
       #
@@ -52,29 +52,39 @@ module CapGun
       #     :email_prefix   subject prefix, defaults to [DEPLOY]
       def deployment_notification(capistrano)
         presenter = Presenter.new(capistrano)
+        html_body = presenter.body.gsub(/\n/, "<br><br>")
         mail(
           :from     => presenter.from,
           :to       => presenter.recipients,
           :subject  => presenter.subject
-        ) do |format|
+          ) do |format|
           format.text { render :text => presenter.body }
+          format.html { render :text => html_body }
         end
       end
     end
 
-end
+  end
 
-if Object.const_defined?("Capistrano")
+  if Object.const_defined?("Capistrano")
 
-  Capistrano::Configuration.instance(:must_exist).load do
+    Capistrano::Configuration.instance(:must_exist).load do
 
-    namespace :cap_gun do
-      desc "Send notification of the current release and the previous release via email."
-      task :email, :roles => :app do
-        CapGun::Mailer.load_mailer_config(self)
-        CapGun::Mailer.deployment_notification(self).deliver
+      namespace :cap_gun do
+        desc "Send notification of the current release and the previous release via email."
+        task :email, :roles => :app do
+          begin
+            CapGun::Mailer.load_mailer_config(self)
+            if CapGun::Mailer.respond_to?(:deployment_notification)
+              CapGun::Mailer.deployment_notification(self).deliver          
+            else
+              CapGun::Mailer.deployment_notification(self).deliver
+            end
+          rescue Exception => e
+            puts "ERROR: unable to send cap_gun email...\n    #{e.message}"
+          end
+        end
       end
     end
-
   end
 end

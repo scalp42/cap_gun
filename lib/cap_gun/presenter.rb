@@ -24,11 +24,15 @@ module CapGun
     end
 
     def current_user
-      Etc.getlogin
+      Etc.getlogin || ENV['LOGNAME'] || "Deploy"
     end
 
     def summary
-      %[#{capistrano[:application]} was #{deployed_to} by #{current_user} at #{release_time}.]
+      if capistrano[:rails_env] == "staging"
+        %[<b>#{current_user}</b> #{deployed_to} (#{capistrano[:application]}, #{capistrano[:target_server]}) at #{release_time}.]
+      else
+        %[<b>#{current_user}</b> #{deployed_to} (#{capistrano[:application]}) at #{release_time}.]
+      end
     end
 
     def deployed_to
@@ -51,19 +55,27 @@ module CapGun
     end
 
     def scm_log
-      "\nCommits since last release\n====================\n#{scm_log_messages}"
+      "\nCommits since last release\n=========================\n#{scm_log_messages}"
     end
 
     def scm_log_messages
       messages = case capistrano[:scm].to_sym
         when :git
-          `git log #{previous_revision}..#{capistrano[:current_revision]} --pretty=format:%h:%s`
+          git_log.empty? ? "There were no commits between the current and previous revision." : git_log.gsub(/pull request #[\d]+/){|m| %Q{pull request <a href="#{capistrano[:pull_url]}/#{m.gsub('pull request #', '')}">#{m.gsub('pull request', '').strip}</a>} }.strip
         when :subversion
           `svn log -r #{previous_revision.to_i+1}:#{capistrano[:current_revision]}`
         else
-          "N/A"
+          "No scm was used. Please look into git or subversion."
       end
-      exit_code.success? ? messages : "N/A"
+    end
+
+    def git_log
+      @git_log ||= begin
+        stdin, stdout, stderr = Open3.popen3("git log #{previous_revision}..#{capistrano[:latest_revision]} --pretty=format:%h:%s")
+        error = stderr.read.chomp
+        return "There was an error getting the commits log (please make sure you checkout the branch you're trying to deploy:)\n#{error}" unless error.blank?
+        stdout.read.chomp
+      end
     end
 
     def exit_code
@@ -111,7 +123,11 @@ module CapGun
     end
 
     def subject
-      "#{email_prefix} #{capistrano[:application]} #{deployed_to}"
+      if capistrano[:rails_env] == "staging"
+        "#{email_prefix} #{current_user} #{deployed_to} (#{capistrano[:application]}, #{capistrano[:target_server]})"
+      else
+        "#{email_prefix} #{current_user} #{deployed_to} (#{capistrano[:application]})"
+      end
     end
 
     def comment
@@ -122,20 +138,32 @@ module CapGun
       capistrano[:repository_url] || capistrano[:repository]
     end
 
+    def server_deployed
+      if capistrano[:rails_env] == "staging"
+        "#{capistrano[:target_server]}"
+      else
+        "production"
+      end
+    end
+
     def body
       body = "#{summary}\n"
+      body << "#{scm_only_requests.join("\n")}\n"
       body << "#{comment}\n"
       body << "Deployment details\n"
       body << "====================\n"
+      body << "\n"
+      body << "Deployed to : <b>#{server_deployed}</b>\n"
+      body << "\n"      
       body << "Release: #{capistrano[:current_release]}\n"
       body << "Release Time: #{release_time}\n"
-      body << "Release Revision: #{capistrano[:current_revision]}\n"
+      body << "Release Revision: #{capistrano[:latest_revision]}"
       body << "\n"
       body << "Previous Release: #{capistrano[:previous_release]}\n"
       body << "Previous Release Time: #{previous_release_time}\n"
       body << "Previous Release Revision: #{previous_revision}\n"
       body << "\n"
-      body << "Repository: #{repository}\n"
+      body << "Repository: #{capistrano[:repository]}\n"
       body << "Deploy path: #{capistrano[:deploy_to]}\n"
       body << "Domain: #{capistrano[:domain]}\n" if capistrano[:domain]
       body << "#{scm_details}\n"
