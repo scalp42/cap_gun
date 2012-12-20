@@ -24,7 +24,7 @@ module CapGun
     end
 
     def current_user
-      Etc.getlogin || ENV['LOGNAME'] || "Deploy"
+      ENV['LOGNAME'] || Etc.getlogin || "Deploy"
     end
 
     def summary
